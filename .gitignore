@@ -1,0 +1,13 @@
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Claude Code paikalliset asetukset
+.claude/
+
+# HuggingFace cache (ladataan automaattisesti)
+~/.cache/huggingface/

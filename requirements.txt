@@ -1,0 +1,17 @@
+# HUOM: Coqui TTS vaatii Python 3.9–3.11. Käytä conda-ympäristöä:
+#   conda create -n tts-radio python=3.11 -y
+#   conda activate tts-radio
+#
+# 1. Asenna PyTorch CUDA-tuella (RTX 4090 = CUDA 12.x):
+#    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# 2. Asenna loput:
+#    pip install -r requirements.txt
+
+f5-tts>=0.3.4
+datasets>=2.14.0
+soundfile>=0.12.1
+librosa>=0.10.0
+numpy>=1.24.0
+tqdm>=4.65.0
+huggingface_hub>=0.20.0
