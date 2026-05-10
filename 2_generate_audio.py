@@ -1,12 +1,11 @@
 """
 Vaihe 2: Tuottaa äänitiedostoja litteroiduista radiologisista saneluista.
 
-Käyttää F5-TTS-mallia zero-shot ääniklonaukseen.
+Käyttää XTTS v2 -mallia zero-shot ääniklonaukseen suomeksi.
 
 Syöte (CSV):
   id,text
   lausunto_001,"Keuhkojen posteroanteriorinen röntgenkuva..."
-  lausunto_002,"Pään tietokonetomografia..."
 
 Käyttö:
   python 2_generate_audio.py data/transcriptions/sanelut.csv
@@ -16,6 +15,7 @@ Käyttö:
 import argparse
 import csv
 import json
+import os
 import random
 import re
 import sys
@@ -29,8 +29,10 @@ from tqdm import tqdm
 VOICES_DIR = Path("data/reference_voices")
 OUTPUT_DIR = Path("data/output")
 
-F5_SAMPLE_RATE = 24000
+XTTS_SAMPLE_RATE = 24000
 SENTENCE_PAUSE_SEC = 0.45
+
+os.environ["COQUI_TOS_AGREED"] = "1"
 
 
 def main():
@@ -51,14 +53,14 @@ def main():
     print(f"Puhujia:  {len(speakers)}")
     print(f"Saneluja: {len(rows)}")
 
-    print("\nLadataan F5-TTS-malli (ensimmäisellä kerralla ~3 GB lataus)...")
+    print("\nLadataan XTTS v2 -malli (ensimmäisellä kerralla ~2 GB lataus)...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Laite: {device}")
     if device == "cpu":
         print("VAROITUS: GPU ei löydy. CPU-ajo on erittäin hidas suurille aineistoille.")
 
-    from f5_tts.api import F5TTS
-    tts = F5TTS(device=device)
+    from TTS.api import TTS
+    tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
 
     metadata_rows = []
     failed = []
@@ -79,9 +81,9 @@ def main():
             continue
 
         try:
-            wav = synthesize_long_text(tts, text, speaker["file"], speaker["ref_text"])
-            sf.write(out_path, wav, F5_SAMPLE_RATE)
-            duration_sec = len(wav) / F5_SAMPLE_RATE
+            wav = synthesize_long_text(tts, text, speaker["file"])
+            sf.write(out_path, wav, XTTS_SAMPLE_RATE)
+            duration_sec = len(wav) / XTTS_SAMPLE_RATE
 
             metadata_rows.append({
                 "id": doc_id,
@@ -108,33 +110,22 @@ def main():
         print(f"\n  Epäonnistuneet ({len(failed)}): {', '.join(failed[:10])}")
 
 
-def synthesize_long_text(tts, text: str, ref_file: str, ref_text: str) -> np.ndarray:
-    """Jakaa tekstin lauseisiin, syntetisoi kukin erikseen ja yhdistää."""
+def synthesize_long_text(tts, text: str, ref_file: str) -> np.ndarray:
     sentences = split_sentences(text)
-    pause = np.zeros(int(SENTENCE_PAUSE_SEC * F5_SAMPLE_RATE), dtype=np.float32)
+    pause = np.zeros(int(SENTENCE_PAUSE_SEC * XTTS_SAMPLE_RATE), dtype=np.float32)
     segments = []
 
     for sentence in sentences:
         if not sentence.strip():
             continue
-        wav, _, _ = tts.infer(
-            ref_file=ref_file,
-            ref_text=ref_text,
-            gen_text=sentence,
-            show_info=lambda *a, **k: None,
-        )
+        wav = tts.tts(text=sentence, speaker_wav=ref_file, language="fi")
         segments.append(np.array(wav, dtype=np.float32))
         segments.append(pause)
 
-    return np.concatenate(segments) if segments else np.zeros(F5_SAMPLE_RATE, dtype=np.float32)
+    return np.concatenate(segments) if segments else np.zeros(XTTS_SAMPLE_RATE, dtype=np.float32)
 
 
 def split_sentences(text: str) -> list[str]:
-    """
-    Jakaa suomenkielisen radiologisen tekstin lauseisiin TTS-ajoa varten.
-    Välit etsitään pisteen/huutomerkin/kysymysmerkin jälkeen ennen isoa kirjainta.
-    Lyhenteet (mm., em., ao. jne.) eivät aiheuta jakoa, koska niitä seuraa pieni kirjain.
-    """
     parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÄÖÅ])', text)
     return [p.strip() for p in parts if p.strip()]
 
