@@ -51,7 +51,6 @@ def main():
         "mozilla-foundation/common_voice_17_0",
         "fi",
         split="validated",
-        trust_remote_code=True,
     )
 
     print(f"Löydettiin {len(ds)} validoitua nauhoitusta.")
