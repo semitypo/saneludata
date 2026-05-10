@@ -1,22 +1,18 @@
 """
 Vaihe 1: Lataa Mozilla Common Voice Finnish ja rakenna referenssiäänitiedostot.
 
-F5-TTS vaatii referenssiäänelle sekä audiotiedoston että litteraatin.
-Molemmat tallennetaan manifest.json-tiedostoon.
+Common Voice on lokakuusta 2025 alkaen saatavilla vain suoraan Mozillalta:
+  https://commonvoice.mozilla.org/fi/datasets
 
-Vaatimukset:
-  - HuggingFace-tili osoitteessa huggingface.co
-  - Hyväksy Common Voice -lisenssi dataset-sivulla:
-    https://huggingface.co/datasets/mozilla-foundation/common_voice_17_0
-  - Kirjaudu sisään: huggingface-cli login
-    tai aseta ympäristömuuttuja: set HF_TOKEN=hf_xxxxx
+Lataa Finnish-datasetti (tar.gz), pura se ja anna polku --cv-path -argumentilla.
 
 Käyttö:
-  python 1_prepare_voices.py
-  python 1_prepare_voices.py --speakers 30 --min-clips 5
+  python 1_prepare_voices.py --cv-path /workspace/cv-corpus-21.0-2025-03-14/fi
+  python 1_prepare_voices.py --cv-path /workspace/cv-corpus-21.0-2025-03-14/fi --speakers 30
 """
 
 import argparse
+import csv
 import json
 import random
 from collections import defaultdict
@@ -25,15 +21,16 @@ from pathlib import Path
 import librosa
 import numpy as np
 import soundfile as sf
-from datasets import load_dataset
 from tqdm import tqdm
 
-SAMPLE_RATE = 24000  # F5-TTS odottaa 24 kHz referenssiääntä
+SAMPLE_RATE = 24000
 OUTPUT_DIR = Path("data/reference_voices")
 
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--cv-path", required=True,
+                        help="Polku purettuun Common Voice fi-hakemistoon (sisältää validated.tsv ja clips/)")
     parser.add_argument("--speakers", type=int, default=20,
                         help="Valittavien puhujien määrä (oletus: 20)")
     parser.add_argument("--min-clips", type=int, default=8,
@@ -42,22 +39,24 @@ def main():
                         help="Referenssiäänen tavoitekesto sekunteina (oletus: 15)")
     args = parser.parse_args()
 
+    cv_path = Path(args.cv_path)
+    tsv_path = cv_path / "validated.tsv"
+    clips_dir = cv_path / "clips"
+
+    if not tsv_path.exists():
+        raise FileNotFoundError(f"validated.tsv ei löydy: {tsv_path}")
+    if not clips_dir.exists():
+        raise FileNotFoundError(f"clips/-hakemisto ei löydy: {clips_dir}")
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("Ladataan Mozilla Common Voice Finnish (validated)...")
-    print("HUOM: Ensimmäisellä kerralla lataus voi kestää useita minuutteja (~2 GB).\n")
-
-    ds = load_dataset(
-        "mozilla-foundation/common_voice_17_0",
-        "fi",
-        split="validated",
-    )
-
-    print(f"Löydettiin {len(ds)} validoitua nauhoitusta.")
+    print(f"Ladataan metadata: {tsv_path}")
+    clips = load_tsv(tsv_path, clips_dir)
+    print(f"Löydettiin {len(clips)} validoitua nauhoitusta.")
 
     speakers: dict[str, list] = defaultdict(list)
-    for item in tqdm(ds, desc="Ryhmitellään puhujittain"):
-        speakers[item["client_id"]].append(item)
+    for clip in clips:
+        speakers[clip["client_id"]].append(clip)
 
     print(f"Uniikkeja puhujia: {len(speakers)}")
 
@@ -68,25 +67,25 @@ def main():
         raise RuntimeError("Ei löytynyt tarpeeksi puhujia. Laske --min-clips arvoa.")
 
     selected = select_diverse_speakers(valid, args.speakers)
-    print(f"Valittiin {len(selected)} puhujaa (sukupuolidiversiteetti huomioitu).\n")
+    print(f"Valittiin {len(selected)} puhujaa.\n")
 
     manifest = {}
 
-    for idx, (_, clips) in enumerate(
+    for idx, (_, clips_list) in enumerate(
         tqdm(selected.items(), desc="Rakennetaan referenssiäänet")
     ):
         out_path = OUTPUT_DIR / f"speaker_{idx:03d}.wav"
-        gender = clips[0].get("gender") or "unknown"
-        age = clips[0].get("age") or "unknown"
+        gender = clips_list[0].get("gender") or "unknown"
+        age = clips_list[0].get("age") or "unknown"
 
-        ref_text = create_reference_audio(clips, out_path, args.ref_duration)
+        ref_text = create_reference_audio(clips_list, out_path, args.ref_duration)
 
         manifest[f"speaker_{idx:03d}"] = {
             "file": str(out_path),
             "ref_text": ref_text,
             "gender": gender,
             "age": age,
-            "clip_count": len(clips),
+            "clip_count": len(clips_list),
         }
 
     manifest_path = OUTPUT_DIR / "manifest.json"
@@ -97,6 +96,18 @@ def main():
     print(f"  Referenssiäänet: {OUTPUT_DIR}/speaker_000.wav ... speaker_{len(selected)-1:03d}.wav")
     print(f"  Manifesti:       {manifest_path}")
     print(f"\nSeuraava vaihe: python 2_generate_audio.py data/transcriptions/sanelut.csv")
+
+
+def load_tsv(tsv_path: Path, clips_dir: Path) -> list[dict]:
+    clips = []
+    with open(tsv_path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            audio_path = clips_dir / row["path"]
+            if audio_path.exists():
+                row["audio_path"] = str(audio_path)
+                clips.append(row)
+    return clips
 
 
 def select_diverse_speakers(speakers: dict, n: int) -> dict:
@@ -111,7 +122,7 @@ def select_diverse_speakers(speakers: dict, n: int) -> dict:
 
     for k, v in male[:half]:
         selected[k] = v
-    for k, v in female[: n - half]:
+    for k, v in female[:n - half]:
         selected[k] = v
 
     for k, v in other + sorted_all:
@@ -124,10 +135,6 @@ def select_diverse_speakers(speakers: dict, n: int) -> dict:
 
 
 def create_reference_audio(clips: list, output_path: Path, target_duration: float) -> str:
-    """
-    Yhdistää klippejä referenssiääneksi ja palauttaa käytettyjen klippien litteraatin.
-    F5-TTS tarvitsee litteraatin ääniä vastaavan tekstin.
-    """
     random.shuffle(clips)
 
     segments = []
@@ -139,12 +146,15 @@ def create_reference_audio(clips: list, output_path: Path, target_duration: floa
         if total_sec >= target_duration:
             break
 
-        arr = np.array(clip["audio"]["array"], dtype=np.float32)
-        sr = clip["audio"]["sampling_rate"]
+        try:
+            arr, sr = librosa.load(clip["audio_path"], sr=None, mono=True)
+        except Exception:
+            continue
 
         if sr != SAMPLE_RATE:
             arr = librosa.resample(arr, orig_sr=sr, target_sr=SAMPLE_RATE)
 
+        arr = arr.astype(np.float32)
         peak = np.max(np.abs(arr))
         if peak > 0:
             arr = arr / peak * 0.88

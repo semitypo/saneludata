@@ -62,9 +62,11 @@ CSV-tiedosto: lataa JupyterLabin Upload-napilla tai kopioi tekstinä.
 ## Pipeline Commands
 
 ```bash
-# Step 1 — run once: download Common Voice FI, build reference voice files
-python 1_prepare_voices.py
-python 1_prepare_voices.py --speakers 30 --min-clips 5 --ref-duration 30
+# Step 1 — run once: build reference voice files from local Common Voice download
+# Download Finnish dataset first: https://commonvoice.mozilla.org/fi/datasets
+# Extract tar.gz, then:
+python 1_prepare_voices.py --cv-path /path/to/cv-corpus-XX.0/fi
+python 1_prepare_voices.py --cv-path /path/to/cv-corpus-XX.0/fi --speakers 30 --min-clips 5
 
 # Step 2 — generate audio from transcriptions CSV
 python 2_generate_audio.py data/transcriptions/sanelut.csv
@@ -95,7 +97,7 @@ lausunto_001,"Keuhkojen posteroanteriorinen röntgenkuva..."
 Two independent scripts connected only by `data/reference_voices/manifest.json`:
 
 **`1_prepare_voices.py`**
-Downloads `mozilla-foundation/common_voice_17_0` (fi, validated split) via HuggingFace `datasets`. Groups clips by `client_id`, filters speakers by minimum clip count, selects N speakers with gender diversity (male/female split), concatenates their clips into per-speaker reference WAV files at 24000 Hz. Also concatenates the corresponding `sentence` fields into a `ref_text` string stored in `manifest.json` — required by F5-TTS.
+Reads Mozilla Common Voice Finnish from a locally downloaded tar.gz (commonvoice.mozilla.org). As of October 2025, Common Voice is no longer available on HuggingFace. Reads `validated.tsv` and `clips/*.mp3`, groups by `client_id`, filters by minimum clip count, selects N speakers with gender diversity, concatenates clips into per-speaker reference WAV files at 24000 Hz. Also concatenates `sentence` fields into `ref_text` stored in `manifest.json` — required by F5-TTS.
 
 **`2_generate_audio.py`**
 Loads F5-TTS via `f5_tts.api.F5TTS`. For each CSV row, picks a random speaker from the manifest (which now includes `ref_text` — the transcript of the reference audio), calls `split_sentences()` to break the text into sentence chunks, synthesizes each sentence separately with `tts.infer(ref_file, ref_text, gen_text)`, then concatenates with 450 ms pauses. Output sample rate is 24000 Hz (F5-TTS native). F5-TTS requires both the reference audio file and its transcript — unlike XTTS v2 which only needed the audio.
