@@ -121,7 +121,7 @@ def synthesize_long_text(tts, text: str, ref_file: str, ref_text: str) -> np.nda
             ref_file=ref_file,
             ref_text=ref_text,
             gen_text=sentence,
-            show_info=False,
+            show_info=lambda *a, **k: None,
         )
         segments.append(np.array(wav, dtype=np.float32))
         segments.append(pause)
