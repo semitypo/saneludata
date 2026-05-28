@@ -6,7 +6,7 @@
 set -e
 
 echo "=== Asennetaan riippuvuudet ==="
-pip install TTS datasets soundfile librosa tqdm huggingface_hub -q
+pip install TTS datasets soundfile librosa tqdm huggingface_hub
 
 echo ""
 echo "=== Tarkistetaan GPU ==="
