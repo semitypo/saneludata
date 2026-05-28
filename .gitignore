@@ -1,5 +1,8 @@
 data/
 
+# API-avaimet — älä koskaan committaa tätä
+.env
+
 # Python
 __pycache__/
 *.pyc
