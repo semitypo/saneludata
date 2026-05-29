@@ -157,6 +157,9 @@ def synthesize_long_text(voice, text: str) -> np.ndarray:
         spoken = punctuation_to_spoken(sentence)
         wav_io = io.BytesIO()
         with wave.open(wav_io, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(voice.config.sample_rate)
             voice.synthesize(spoken, wav_file)
         wav_io.seek(0)
         with wave.open(wav_io, "rb") as wav_file:
