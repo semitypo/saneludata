@@ -1,20 +1,16 @@
 """
 Vaihe 2: Tuottaa äänitiedostoja litteroiduista radiologisista saneluista.
 
-Käyttää XTTS v2 -mallia zero-shot ääniklonaukseen suomeksi.
-
-Syöte (CSV):
-  id,text
-  lausunto_001,"Keuhkojen posteroanteriorinen röntgenkuva..."
+Käyttää Bark-mallia suomenkieliseen TTS-synteesiin.
+10 suomalaista puhujaa: v2/fi_speaker_0 ... v2/fi_speaker_9
 
 Käyttö:
   python 2_generate_audio.py data/transcriptions/sanelut.csv
-  python 2_generate_audio.py data/transcriptions/sanelut.csv --speakers 10 --seed 123
+  python 2_generate_audio.py data/transcriptions/sanelut.csv --speakers 5 --seed 123
 """
 
 import argparse
 import csv
-import json
 import os
 import random
 import re
@@ -26,41 +22,65 @@ import soundfile as sf
 import torch
 from tqdm import tqdm
 
-VOICES_DIR = Path("data/reference_voices")
 OUTPUT_DIR = Path("data/output")
-
-XTTS_SAMPLE_RATE = 24000
+BARK_SAMPLE_RATE = 24000
 SENTENCE_PAUSE_SEC = 0.45
+FI_SPEAKERS = [f"v2/fi_speaker_{i}" for i in range(10)]
 
-os.environ["COQUI_TOS_AGREED"] = "1"
+_DAY_ORDINALS = {
+    1: 'ensimmäinen', 2: 'toinen', 3: 'kolmas', 4: 'neljäs',
+    5: 'viides', 6: 'kuudes', 7: 'seitsemäs', 8: 'kahdeksas',
+    9: 'yhdeksäs', 10: 'kymmenes', 11: 'yhdestoista',
+    12: 'kahdestoista', 13: 'kolmastoista', 14: 'neljästoista',
+    15: 'viidestoista', 16: 'kuudestoista', 17: 'seitsemästoista',
+    18: 'kahdeksastoista', 19: 'yhdeksästoista', 20: 'kahdeskymmenes',
+    21: 'kahdeskymmenesensimmäinen', 22: 'kahdeskymmenestoinen',
+    23: 'kahdeskymmeneskolmas', 24: 'kahdeskymmenesneljäs',
+    25: 'kahdeskymmenesviides', 26: 'kahdeskymmeneskuudes',
+    27: 'kahdeskymmenesseitsemäs', 28: 'kahdeskymmeneskahdeksas',
+    29: 'kahdeskymmenesyhdeksäs', 30: 'kolmaskymmenes',
+    31: 'kolmaskymmenesensimmäinen',
+}
+
+_MONTH_PARTITIVES = {
+    1: 'ensimmäistä', 2: 'toista', 3: 'kolmatta', 4: 'neljättä',
+    5: 'viidettä', 6: 'kuudetta', 7: 'seitsemättä', 8: 'kahdeksatta',
+    9: 'yhdeksättä', 10: 'kymmenettä', 11: 'yhdettätoista',
+    12: 'kahdettatoista',
+}
+
+ROMAN_NUMERALS = {
+    'XII': 'kaksitoista', 'XI': 'yksitoista', 'X': 'kymmenen',
+    'IX': 'yhdeksän', 'VIII': 'kahdeksan', 'VII': 'seitsemän',
+    'VI': 'kuusi', 'V': 'viisi', 'IV': 'neljä',
+    'III': 'kolme', 'II': 'kaksi', 'I': 'yksi',
+}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_csv", help="CSV-tiedosto (sarakkeet: id, text)")
     parser.add_argument("--speakers", type=int, default=None,
-                        help="Käytettävien puhujien määrä (oletus: kaikki)")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Satunnaisluvun siemen toistettavuuteen (oletus: 42)")
+                        help="Käytettävien puhujien määrä 1-10 (oletus: kaikki 10)")
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     random.seed(args.seed)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    speakers = load_speakers(args.speakers)
+    speakers = FI_SPEAKERS[:args.speakers] if args.speakers else FI_SPEAKERS
     rows = load_csv(args.input_csv)
 
     print(f"Puhujia:  {len(speakers)}")
     print(f"Saneluja: {len(rows)}")
 
-    print("\nLadataan XTTS v2 -malli (ensimmäisellä kerralla ~2 GB lataus)...")
+    print("\nLadataan Bark-malli (ensimmäisellä kerralla ~2 GB lataus)...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Laite: {device}")
     if device == "cpu":
-        print("VAROITUS: GPU ei löydy. CPU-ajo on erittäin hidas suurille aineistoille.")
+        print("VAROITUS: GPU ei löydy. CPU-ajo on erittäin hidas.")
 
-    from TTS.api import TTS
-    tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+    from bark import generate_audio
 
     metadata_rows = []
     failed = []
@@ -73,7 +93,7 @@ def main():
             continue
 
         speaker = random.choice(speakers)
-        speaker_id = Path(speaker["file"]).stem
+        speaker_id = speaker.replace("/", "_")
         out_path = OUTPUT_DIR / f"{doc_id}_{speaker_id}.wav"
 
         if out_path.exists():
@@ -81,9 +101,9 @@ def main():
             continue
 
         try:
-            wav = synthesize_long_text(tts, text, speaker["file"])
-            sf.write(out_path, wav, XTTS_SAMPLE_RATE)
-            duration_sec = len(wav) / XTTS_SAMPLE_RATE
+            wav = synthesize_long_text(text, speaker, generate_audio)
+            sf.write(out_path, wav, BARK_SAMPLE_RATE)
+            duration_sec = len(wav) / BARK_SAMPLE_RATE
 
             metadata_rows.append({
                 "id": doc_id,
@@ -110,55 +130,26 @@ def main():
         print(f"\n  Epäonnistuneet ({len(failed)}): {', '.join(failed[:10])}")
 
 
-def synthesize_long_text(tts, text: str, ref_file: str) -> np.ndarray:
+def synthesize_long_text(text: str, speaker: str, generate_audio) -> np.ndarray:
     sentences = split_sentences(text)
-    pause = np.zeros(int(SENTENCE_PAUSE_SEC * XTTS_SAMPLE_RATE), dtype=np.float32)
+    pause = np.zeros(int(SENTENCE_PAUSE_SEC * BARK_SAMPLE_RATE), dtype=np.float32)
     segments = []
 
     for sentence in sentences:
         if not sentence.strip():
             continue
         spoken = punctuation_to_spoken(sentence)
-        wav = tts.tts(text=spoken, speaker_wav=ref_file, language="fi")
+        wav = generate_audio(spoken, history_prompt=speaker)
         segments.append(np.array(wav, dtype=np.float32))
         segments.append(pause)
 
-    return np.concatenate(segments) if segments else np.zeros(XTTS_SAMPLE_RATE, dtype=np.float32)
+    return np.concatenate(segments) if segments else np.zeros(BARK_SAMPLE_RATE, dtype=np.float32)
 
 
 def split_sentences(text: str) -> list[str]:
     parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÄÖÅ])', text)
     return [p.strip() for p in parts if p.strip()]
 
-
-ROMAN_NUMERALS = {
-    'XII': 'kaksitoista', 'XI': 'yksitoista', 'X': 'kymmenen',
-    'IX': 'yhdeksän', 'VIII': 'kahdeksan', 'VII': 'seitsemän',
-    'VI': 'kuusi', 'V': 'viisi', 'IV': 'neljä',
-    'III': 'kolme', 'II': 'kaksi', 'I': 'yksi',
-}
-
-_DAY_ORDINALS = {
-    1: 'ensimmäinen', 2: 'toinen', 3: 'kolmas', 4: 'neljäs',
-    5: 'viides', 6: 'kuudes', 7: 'seitsemäs', 8: 'kahdeksas',
-    9: 'yhdeksäs', 10: 'kymmenes', 11: 'yhdestoista',
-    12: 'kahdestoista', 13: 'kolmastoista', 14: 'neljästoista',
-    15: 'viidestoista', 16: 'kuudestoista', 17: 'seitsemästoista',
-    18: 'kahdeksastoista', 19: 'yhdeksästoista', 20: 'kahdeskymmenes',
-    21: 'kahdeskymmenesensimmäinen', 22: 'kahdeskymmenestoinen',
-    23: 'kahdeskymmeneskolmas', 24: 'kahdeskymmenesneljäs',
-    25: 'kahdeskymmenesviides', 26: 'kahdeskymmeneskuudes',
-    27: 'kahdeskymmenesseitsemäs', 28: 'kahdeskymmeneskahdeksas',
-    29: 'kahdeskymmenesyhdeksäs', 30: 'kolmaskymmenes',
-    31: 'kolmaskymmenesensimmäinen',
-}
-
-_MONTH_PARTITIVES = {
-    1: 'ensimmäistä', 2: 'toista', 3: 'kolmatta', 4: 'neljättä',
-    5: 'viidettä', 6: 'kuudetta', 7: 'seitsemättä', 8: 'kahdeksatta',
-    9: 'yhdeksättä', 10: 'kymmenettä', 11: 'yhdettätoista',
-    12: 'kahdettatoista',
-}
 
 def _colloquial_number(n: int) -> str:
     ones = ['', 'yks', 'kaks', 'kolme', 'neljä', 'viis', 'kuus',
@@ -177,6 +168,7 @@ def _colloquial_number(n: int) -> str:
         o = ones[n % 10]
         return (t + ' ' + o).strip() if o else t
 
+
 def _date_to_spoken(match) -> str:
     d, m, y = int(match.group(1)), int(match.group(2)), int(match.group(3))
     day = _DAY_ORDINALS.get(d, str(d))
@@ -185,8 +177,8 @@ def _date_to_spoken(match) -> str:
     year = ('kakstuhatta ' + _colloquial_number(rest)).strip() if 2000 <= y <= 2099 else str(y)
     return f'{day} {month} {year}'
 
+
 def punctuation_to_spoken(text: str) -> str:
-    """Muuntaa päivämäärät, välimerkit ja roomalaiset numerot puhutuiksi sanoiksi."""
     text = re.sub(r'\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b', _date_to_spoken, text)
     for roman, spoken in ROMAN_NUMERALS.items():
         text = re.sub(rf'\b{roman}\b', spoken, text)
@@ -200,27 +192,6 @@ def punctuation_to_spoken(text: str) -> str:
     text = text.replace(',', ' pilkku')
     text = text.replace('.', ' piste')
     return re.sub(r' +', ' ', text).strip()
-
-
-def load_speakers(n: int | None) -> list[dict]:
-    manifest_path = VOICES_DIR / "manifest.json"
-    if not manifest_path.exists():
-        print(f"VIRHE: Referenssiääniä ei löydy. Aja ensin: python 1_prepare_voices.py")
-        sys.exit(1)
-
-    with open(manifest_path, encoding="utf-8") as f:
-        manifest = json.load(f)
-
-    speakers = list(manifest.values())
-    if n:
-        speakers = speakers[:n]
-
-    missing = [s["file"] for s in speakers if not Path(s["file"]).exists()]
-    if missing:
-        print(f"VIRHE: {len(missing)} referenssiäänitiedostoa puuttuu.")
-        sys.exit(1)
-
-    return speakers
 
 
 def load_csv(path: str) -> list[dict]:
