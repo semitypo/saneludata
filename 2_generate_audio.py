@@ -11,10 +11,11 @@ Usage:
 
 import argparse
 import csv
-import io
 import random
 import re
 import sys
+import tempfile
+import os
 import wave
 from pathlib import Path
 
@@ -155,16 +156,17 @@ def synthesize_long_text(voice, text: str) -> np.ndarray:
         if not sentence.strip():
             continue
         spoken = punctuation_to_spoken(sentence)
-        wav_io = io.BytesIO()
-        with wave.open(wav_io, "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(voice.config.sample_rate)
-            voice.synthesize(spoken, wav_file)
-        wav_io.seek(0)
-        with wave.open(wav_io, "rb") as wav_file:
-            frames = wav_file.readframes(wav_file.getnframes())
-            audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            with wave.open(tmp_path, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(voice.config.sample_rate)
+                voice.synthesize(spoken, wav_file)
+            audio, _ = sf.read(tmp_path, dtype="float32")
+        finally:
+            os.unlink(tmp_path)
         segments.append(audio)
         segments.append(pause)
 
