@@ -1,10 +1,10 @@
 """
-Vaihe 2: Tuottaa äänitiedostoja litteroiduista radiologisista saneluista.
+Step 2: Generate audio from transcribed radiological dictations.
 
-Käyttää Bark-mallia suomenkieliseen TTS-synteesiin.
-10 suomalaista puhujaa: v2/fi_speaker_0 ... v2/fi_speaker_9
+Uses Bark TTS with Finnish speaker presets created by 0_create_bark_presets.py.
+Speakers: v2/fi_speaker_0 ... v2/fi_speaker_9
 
-Käyttö:
+Usage:
   python 2_generate_audio.py data/transcriptions/sanelut.csv
   python 2_generate_audio.py data/transcriptions/sanelut.csv --speakers 5 --seed 123
 """
@@ -71,14 +71,14 @@ def main():
     speakers = FI_SPEAKERS[:args.speakers] if args.speakers else FI_SPEAKERS
     rows = load_csv(args.input_csv)
 
-    print(f"Puhujia:  {len(speakers)}")
-    print(f"Saneluja: {len(rows)}")
+    print(f"Speakers: {len(speakers)}")
+    print(f"Dictations: {len(rows)}")
 
-    print("\nLadataan Bark-malli (ensimmäisellä kerralla ~2 GB lataus)...")
+    print("\nLoading Bark model (first run downloads ~2 GB)...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Laite: {device}")
+    print(f"Device: {device}")
     if device == "cpu":
-        print("VAROITUS: GPU ei löydy. CPU-ajo on erittäin hidas.")
+        print("WARNING: No GPU found. CPU inference is very slow.")
 
     from bark import generate_audio
 
@@ -97,7 +97,7 @@ def main():
         out_path = OUTPUT_DIR / f"{doc_id}_{speaker_id}.wav"
 
         if out_path.exists():
-            tqdm.write(f"  Ohitetaan (jo olemassa): {out_path.name}")
+            tqdm.write(f"  Skipping (already exists): {out_path.name}")
             continue
 
         try:
@@ -114,20 +114,20 @@ def main():
             })
 
         except Exception as e:
-            tqdm.write(f"  VIRHE ({doc_id}): {e}")
+            tqdm.write(f"  ERROR ({doc_id}): {e}")
             failed.append(doc_id)
 
     write_metadata(metadata_rows, OUTPUT_DIR / "metadata.csv")
 
     total_min = sum(r["duration_sec"] for r in metadata_rows) / 60
-    print(f"\nValmis!")
-    print(f"  Äänitiedostoja: {len(metadata_rows)}")
-    print(f"  Kokonaiskesto:  {total_min:.1f} min ({total_min/60:.2f} h)")
-    print(f"  Hakemisto:      {OUTPUT_DIR}")
-    print(f"  Metatiedot:     {OUTPUT_DIR / 'metadata.csv'}")
+    print(f"\nDone!")
+    print(f"  Audio files:  {len(metadata_rows)}")
+    print(f"  Total length: {total_min:.1f} min ({total_min/60:.2f} h)")
+    print(f"  Output dir:   {OUTPUT_DIR}")
+    print(f"  Metadata:     {OUTPUT_DIR / 'metadata.csv'}")
 
     if failed:
-        print(f"\n  Epäonnistuneet ({len(failed)}): {', '.join(failed[:10])}")
+        print(f"\n  Failed ({len(failed)}): {', '.join(failed[:10])}")
 
 
 def synthesize_long_text(text: str, speaker: str, generate_audio) -> np.ndarray:
@@ -197,7 +197,7 @@ def punctuation_to_spoken(text: str) -> str:
 def load_csv(path: str) -> list[dict]:
     p = Path(path)
     if not p.exists():
-        print(f"VIRHE: CSV-tiedostoa ei löydy: {path}")
+        print(f"ERROR: CSV file not found: {path}")
         sys.exit(1)
 
     with open(p, encoding="utf-8", newline="") as f:
@@ -205,7 +205,7 @@ def load_csv(path: str) -> list[dict]:
         rows = list(reader)
 
     if "id" not in reader.fieldnames or "text" not in reader.fieldnames:
-        print("VIRHE: CSV:ssä täytyy olla sarakkeet 'id' ja 'text'.")
+        print("ERROR: CSV must have 'id' and 'text' columns.")
         sys.exit(1)
 
     return rows

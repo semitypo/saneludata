@@ -1,14 +1,14 @@
 """
-Vaihe 1: Lataa Mozilla Common Voice Finnish ja rakenna referenssiäänitiedostot.
+Step 1: Build reference voice files from Mozilla Common Voice Finnish.
 
-Common Voice on lokakuusta 2025 alkaen saatavilla vain suoraan Mozillalta:
+Download the Finnish dataset (tar.gz) from:
   https://commonvoice.mozilla.org/fi/datasets
 
-Lataa Finnish-datasetti (tar.gz), pura se ja anna polku --cv-path -argumentilla.
+Extract it and pass the path with --cv-path.
 
-Käyttö:
-  python 1_prepare_voices.py --cv-path /workspace/cv-corpus-21.0-2025-03-14/fi
-  python 1_prepare_voices.py --cv-path /workspace/cv-corpus-21.0-2025-03-14/fi --speakers 30
+Usage:
+  python 1_prepare_voices.py --cv-path /workspace/cv-corpus-25.0/fi
+  python 1_prepare_voices.py --cv-path /workspace/cv-corpus-25.0/fi --speakers 30
 """
 
 import argparse
@@ -30,13 +30,13 @@ OUTPUT_DIR = Path("data/reference_voices")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cv-path", required=True,
-                        help="Polku purettuun Common Voice fi-hakemistoon (sisältää validated.tsv ja clips/)")
+                        help="Path to extracted Common Voice fi directory (contains validated.tsv and clips/)")
     parser.add_argument("--speakers", type=int, default=20,
-                        help="Valittavien puhujien määrä (oletus: 20)")
+                        help="Number of speakers to select (default: 20)")
     parser.add_argument("--min-clips", type=int, default=8,
-                        help="Vähimmäisklippimäärä per puhuja (oletus: 8)")
+                        help="Minimum clips per speaker (default: 8)")
     parser.add_argument("--ref-duration", type=float, default=15.0,
-                        help="Referenssiäänen tavoitekesto sekunteina (oletus: 15)")
+                        help="Target reference audio duration in seconds (default: 15)")
     args = parser.parse_args()
 
     cv_path = Path(args.cv_path)
@@ -44,35 +44,35 @@ def main():
     clips_dir = cv_path / "clips"
 
     if not tsv_path.exists():
-        raise FileNotFoundError(f"validated.tsv ei löydy: {tsv_path}")
+        raise FileNotFoundError(f"validated.tsv not found: {tsv_path}")
     if not clips_dir.exists():
-        raise FileNotFoundError(f"clips/-hakemisto ei löydy: {clips_dir}")
+        raise FileNotFoundError(f"clips/ directory not found: {clips_dir}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print(f"Ladataan metadata: {tsv_path}")
+    print(f"Loading metadata: {tsv_path}")
     clips = load_tsv(tsv_path, clips_dir)
-    print(f"Löydettiin {len(clips)} validoitua nauhoitusta.")
+    print(f"Found {len(clips)} validated recordings.")
 
     speakers: dict[str, list] = defaultdict(list)
     for clip in clips:
         speakers[clip["client_id"]].append(clip)
 
-    print(f"Uniikkeja puhujia: {len(speakers)}")
+    print(f"Unique speakers: {len(speakers)}")
 
     valid = {k: v for k, v in speakers.items() if len(v) >= args.min_clips}
-    print(f"Puhujia joilla {args.min_clips}+ klippiä: {len(valid)}")
+    print(f"Speakers with {args.min_clips}+ clips: {len(valid)}")
 
     if len(valid) == 0:
-        raise RuntimeError("Ei löytynyt tarpeeksi puhujia. Laske --min-clips arvoa.")
+        raise RuntimeError("No speakers found. Try lowering --min-clips.")
 
     selected = select_diverse_speakers(valid, args.speakers)
-    print(f"Valittiin {len(selected)} puhujaa.\n")
+    print(f"Selected {len(selected)} speakers.\n")
 
     manifest = {}
 
     for idx, (_, clips_list) in enumerate(
-        tqdm(selected.items(), desc="Rakennetaan referenssiäänet")
+        tqdm(selected.items(), desc="Building reference voices")
     ):
         out_path = OUTPUT_DIR / f"speaker_{idx:03d}.wav"
         gender = clips_list[0].get("gender") or "unknown"
@@ -92,10 +92,10 @@ def main():
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    print(f"\nValmis!")
-    print(f"  Referenssiäänet: {OUTPUT_DIR}/speaker_000.wav ... speaker_{len(selected)-1:03d}.wav")
-    print(f"  Manifesti:       {manifest_path}")
-    print(f"\nSeuraava vaihe: python 2_generate_audio.py data/transcriptions/sanelut.csv")
+    print(f"\nDone!")
+    print(f"  Reference voices: {OUTPUT_DIR}/speaker_000.wav ... speaker_{len(selected)-1:03d}.wav")
+    print(f"  Manifest:         {manifest_path}")
+    print(f"\nNext step: python 0_create_bark_presets.py")
 
 
 def load_tsv(tsv_path: Path, clips_dir: Path) -> list[dict]:

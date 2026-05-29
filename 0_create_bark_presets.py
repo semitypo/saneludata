@@ -1,10 +1,12 @@
 """
-Luo Bark speaker-presetit Mozilla Common Voice Finnish -äänistä.
+Step 0: Create Bark speaker presets from Mozilla Common Voice Finnish audio.
 
-Enkoodaa referenssiäänet Barkin EnCodec-mallilla ja tallentaa
-.npz-tiedostoina hakemistoon bark/assets/prompts/v2/fi_speaker_X.npz
+Encodes reference voices through Bark's EnCodec model and saves them as
+.npz files at bark/assets/prompts/v2/fi_speaker_X.npz
 
-Käyttö:
+Run 1_prepare_voices.py first to build the reference voices.
+
+Usage:
   python 0_create_bark_presets.py
   python 0_create_bark_presets.py --speakers 10
 """
@@ -33,17 +35,17 @@ def main():
 
     manifest_path = VOICES_DIR / "manifest.json"
     if not manifest_path.exists():
-        print("VIRHE: Aja ensin 1_prepare_voices.py")
+        print("ERROR: Run 1_prepare_voices.py first.")
         return
 
     with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
 
     speakers = list(manifest.items())[:args.speakers]
-    print(f"Luodaan {len(speakers)} Finnish Bark-presetti referenssiäänistä...")
+    print(f"Creating {len(speakers)} Finnish Bark speaker presets from reference audio...")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Laite: {device}")
+    print(f"Device: {device}")
 
     from bark.generation import load_codec_model, generate_text_semantic
     CODEC_MODEL_SAMPLE_RATE = 24000
@@ -57,12 +59,12 @@ def main():
     ):
         preset_path = prompts_dir / f"fi_speaker_{idx}.npz"
         if preset_path.exists():
-            tqdm.write(f"  Ohitetaan (jo olemassa): fi_speaker_{idx}.npz")
+            tqdm.write(f"  Skipping (already exists): fi_speaker_{idx}.npz")
             continue
 
         audio_path = Path(speaker_info["file"])
         if not audio_path.exists():
-            tqdm.write(f"  PUUTTUU: {audio_path}")
+            tqdm.write(f"  MISSING: {audio_path}")
             continue
 
         try:
@@ -111,17 +113,16 @@ def main():
                 fine_prompt=fine_prompt,
             )
 
-            tqdm.write(f"  Tallennettu: fi_speaker_{idx}.npz "
+            tqdm.write(f"  Saved: fi_speaker_{idx}.npz "
                        f"({speaker_info.get('gender','?')}, {speaker_info.get('age','?')})")
 
         except Exception as e:
-            tqdm.write(f"  VIRHE ({speaker_id}): {e}")
+            tqdm.write(f"  ERROR ({speaker_id}): {e}")
 
-    # Tarkista tulokset
     created = list(prompts_dir.glob("fi_speaker_*.npz"))
-    print(f"\nValmis! {len(created)} Finnish speaker-presetti tallennettu.")
-    print(f"  Hakemisto: {prompts_dir}")
-    print("\nSeuraava vaihe:")
+    print(f"\nDone! {len(created)} Finnish speaker presets saved.")
+    print(f"  Directory: {prompts_dir}")
+    print("\nNext step:")
     print("  python 2_generate_audio.py data/transcriptions/sanelut.csv")
 
 
