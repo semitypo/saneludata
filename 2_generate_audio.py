@@ -131,8 +131,17 @@ def split_sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+ROMAN_NUMERALS = {
+    'XII': 'kaksitoista', 'XI': 'yksitoista', 'X': 'kymmenen',
+    'IX': 'yhdeksän', 'VIII': 'kahdeksan', 'VII': 'seitsemän',
+    'VI': 'kuusi', 'V': 'viisi', 'IV': 'neljä',
+    'III': 'kolme', 'II': 'kaksi', 'I': 'yksi',
+}
+
 def punctuation_to_spoken(text: str) -> str:
-    """Muuntaa välimerkit puhutuiksi sanoiksi radiologisen sanelukäytännön mukaisesti."""
+    """Muuntaa välimerkit ja roomalaiset numerot puhutuiksi sanoiksi."""
+    for roman, spoken in ROMAN_NUMERALS.items():
+        text = re.sub(rf'\b{roman}\b', spoken, text)
     text = text.replace('—', ' ajatusviiva')
     text = text.replace('–', ' ajatusviiva')
     text = text.replace('(', ' sulku auki ')
