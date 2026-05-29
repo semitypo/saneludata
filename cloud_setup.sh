@@ -40,7 +40,7 @@ else
     echo "  (parallel downloads with speed and progress display)"
     echo ""
     mkdir -p $PACKAGES_DIR
-    uv pip install suno-bark "transformers==4.44.2" datasets soundfile librosa tqdm huggingface_hub \
+    uv pip install piper-tts datasets soundfile librosa tqdm huggingface_hub \
         --target $PACKAGES_DIR \
         --system \
         --no-cache

@@ -1,40 +1,34 @@
 """
 Step 2: Generate audio from transcribed radiological dictations.
 
-Uses Bark TTS with Finnish speaker presets created by 0_create_bark_presets.py.
-Speakers: v2/fi_speaker_0 ... v2/fi_speaker_9
+Uses Piper TTS with Finnish voice (fi_FI-harri-medium).
+Model is downloaded automatically on first run.
 
 Usage:
   python 2_generate_audio.py data/transcriptions/sanelut.csv
-  python 2_generate_audio.py data/transcriptions/sanelut.csv --speakers 5 --seed 123
+  python 2_generate_audio.py data/transcriptions/sanelut.csv --seed 123
 """
 
 import argparse
 import csv
-import os
+import io
 import random
 import re
 import sys
+import wave
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-import torch
 from tqdm import tqdm
 
 OUTPUT_DIR = Path("data/output")
-BARK_SAMPLE_RATE = 24000
+MODELS_DIR = Path("data/piper_models")
+PIPER_SAMPLE_RATE = 22050
 SENTENCE_PAUSE_SEC = 0.45
 
-def _get_fi_speakers() -> list[str]:
-    import bark
-    prompts_dir = Path(bark.__file__).parent / "assets" / "prompts" / "v2"
-    speakers = sorted(prompts_dir.glob("fi_speaker_*.npz"))
-    if not speakers:
-        raise RuntimeError(
-            "No Finnish speaker presets found. Run: python 0_create_bark_presets.py"
-        )
-    return [str(s) for s in speakers]
+PIPER_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fi/fi_FI/harri/medium/fi_FI-harri-medium.onnx"
+PIPER_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fi/fi_FI/harri/medium/fi_FI-harri-medium.onnx.json"
 
 _DAY_ORDINALS = {
     1: 'ensimmäinen', 2: 'toinen', 3: 'kolmas', 4: 'neljäs',
@@ -68,57 +62,49 @@ ROMAN_NUMERALS = {
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_csv", help="CSV-tiedosto (sarakkeet: id, text)")
-    parser.add_argument("--speakers", type=int, default=None,
-                        help="Käytettävien puhujien määrä 1-10 (oletus: kaikki 10)")
+    parser.add_argument("input_csv", help="CSV file with 'id' and 'text' columns")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     random.seed(args.seed)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    all_speakers = _get_fi_speakers()
-    speakers = all_speakers[:args.speakers] if args.speakers else all_speakers
     rows = load_csv(args.input_csv)
-
-    print(f"Speakers: {len(speakers)}")
     print(f"Dictations: {len(rows)}")
 
-    print("\nLoading Bark model (first run downloads ~2 GB)...")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device: {device}")
-    if device == "cpu":
-        print("WARNING: No GPU found. CPU inference is very slow.")
+    model_path, config_path = download_model()
 
-    from bark import generate_audio
+    print("Loading Piper TTS model...")
+    from piper.voice import PiperVoice
+    voice = PiperVoice.load(str(model_path), config_path=str(config_path))
+    print("Model loaded.")
 
     metadata_rows = []
     failed = []
 
-    for row in tqdm(rows, desc="Tuotetaan ääntä"):
+    for row in tqdm(rows, desc="Generating audio"):
         doc_id = row["id"].strip()
         text = row["text"].strip()
 
         if not text:
             continue
 
-        speaker = random.choice(speakers)
-        speaker_id = Path(speaker).stem
-        out_path = OUTPUT_DIR / f"{doc_id}_{speaker_id}.wav"
+        out_path = OUTPUT_DIR / f"{doc_id}_fi_harri.wav"
 
         if out_path.exists():
             tqdm.write(f"  Skipping (already exists): {out_path.name}")
             continue
 
         try:
-            wav = synthesize_long_text(text, speaker, generate_audio)
-            sf.write(out_path, wav, BARK_SAMPLE_RATE)
-            duration_sec = len(wav) / BARK_SAMPLE_RATE
+            wav = synthesize_long_text(voice, text)
+            sf.write(out_path, wav, PIPER_SAMPLE_RATE)
+            duration_sec = len(wav) / PIPER_SAMPLE_RATE
 
             metadata_rows.append({
                 "id": doc_id,
                 "audio_file": str(out_path),
-                "speaker_id": speaker_id,
+                "speaker_id": "fi_harri",
                 "duration_sec": round(duration_sec, 2),
                 "text": text,
             })
@@ -142,20 +128,44 @@ def main():
         print(f"\n  Failed ({len(failed)}): {', '.join(failed[:10])}")
 
 
-def synthesize_long_text(text: str, speaker: str, generate_audio) -> np.ndarray:
+def download_model() -> tuple[Path, Path]:
+    model_path = MODELS_DIR / "fi_FI-harri-medium.onnx"
+    config_path = MODELS_DIR / "fi_FI-harri-medium.onnx.json"
+
+    if not model_path.exists():
+        print(f"Downloading Piper Finnish model...")
+        import urllib.request
+        urllib.request.urlretrieve(PIPER_MODEL_URL, model_path)
+        print(f"  Saved: {model_path}")
+
+    if not config_path.exists():
+        import urllib.request
+        urllib.request.urlretrieve(PIPER_CONFIG_URL, config_path)
+        print(f"  Saved: {config_path}")
+
+    return model_path, config_path
+
+
+def synthesize_long_text(voice, text: str) -> np.ndarray:
     sentences = split_sentences(text)
-    pause = np.zeros(int(SENTENCE_PAUSE_SEC * BARK_SAMPLE_RATE), dtype=np.float32)
+    pause = np.zeros(int(SENTENCE_PAUSE_SEC * PIPER_SAMPLE_RATE), dtype=np.float32)
     segments = []
 
     for sentence in sentences:
         if not sentence.strip():
             continue
         spoken = punctuation_to_spoken(sentence)
-        wav = generate_audio(spoken, history_prompt=speaker)
-        segments.append(np.array(wav, dtype=np.float32))
+        wav_io = io.BytesIO()
+        with wave.open(wav_io, "wb") as wav_file:
+            voice.synthesize(spoken, wav_file)
+        wav_io.seek(0)
+        with wave.open(wav_io, "rb") as wav_file:
+            frames = wav_file.readframes(wav_file.getnframes())
+            audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        segments.append(audio)
         segments.append(pause)
 
-    return np.concatenate(segments) if segments else np.zeros(BARK_SAMPLE_RATE, dtype=np.float32)
+    return np.concatenate(segments) if segments else np.zeros(PIPER_SAMPLE_RATE, dtype=np.float32)
 
 
 def split_sentences(text: str) -> list[str]:
@@ -211,15 +221,12 @@ def load_csv(path: str) -> list[dict]:
     if not p.exists():
         print(f"ERROR: CSV file not found: {path}")
         sys.exit(1)
-
     with open(p, encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
-
     if "id" not in reader.fieldnames or "text" not in reader.fieldnames:
         print("ERROR: CSV must have 'id' and 'text' columns.")
         sys.exit(1)
-
     return rows
 
 

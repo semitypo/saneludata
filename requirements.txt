@@ -8,7 +8,7 @@
 # 2. Asenna loput:
 #    pip install -r requirements.txt
 
-suno-bark
+piper-tts
 transformers==4.44.2
 datasets>=2.14.0
 soundfile>=0.12.1
