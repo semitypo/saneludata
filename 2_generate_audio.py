@@ -148,6 +148,7 @@ def punctuation_to_spoken(text: str) -> str:
     text = text.replace(')', ' sulku kiinni ')
     text = text.replace(';', ' puolipiste')
     text = text.replace(':', ' kaksoispiste')
+    text = text.replace('/', ' kautta ')
     text = text.replace(',', ' pilkku')
     text = text.replace('.', ' piste')
     return re.sub(r' +', ' ', text).strip()
