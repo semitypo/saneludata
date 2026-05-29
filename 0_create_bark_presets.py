@@ -45,7 +45,8 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Laite: {device}")
 
-    from bark.generation import load_codec_model, generate_text_semantic, CODEC_MODEL_SAMPLE_RATE
+    from bark.generation import load_codec_model, generate_text_semantic
+    CODEC_MODEL_SAMPLE_RATE = 24000
     codec_model = load_codec_model(use_gpu=(device == "cuda"))
 
     # Lyhyt suomenkielinen lause semanttisten tokenien generointiin
