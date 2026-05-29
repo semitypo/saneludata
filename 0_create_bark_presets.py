@@ -108,9 +108,9 @@ def main():
 
             np.savez(
                 str(preset_path),
-                semantic_prompt=semantic_tokens,
-                coarse_prompt=coarse_prompt,
-                fine_prompt=fine_prompt,
+                semantic_prompt=np.array(semantic_tokens, dtype=np.int32),
+                coarse_prompt=coarse_prompt.astype(np.int64),
+                fine_prompt=fine_prompt.astype(np.int64),
             )
 
             tqdm.write(f"  Saved: fi_speaker_{idx}.npz "
