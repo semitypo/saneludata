@@ -138,8 +138,56 @@ ROMAN_NUMERALS = {
     'III': 'kolme', 'II': 'kaksi', 'I': 'yksi',
 }
 
+_DAY_ORDINALS = {
+    1: 'ensimmäinen', 2: 'toinen', 3: 'kolmas', 4: 'neljäs',
+    5: 'viides', 6: 'kuudes', 7: 'seitsemäs', 8: 'kahdeksas',
+    9: 'yhdeksäs', 10: 'kymmenes', 11: 'yhdestoista',
+    12: 'kahdestoista', 13: 'kolmastoista', 14: 'neljästoista',
+    15: 'viidestoista', 16: 'kuudestoista', 17: 'seitsemästoista',
+    18: 'kahdeksastoista', 19: 'yhdeksästoista', 20: 'kahdeskymmenes',
+    21: 'kahdeskymmenesensimmäinen', 22: 'kahdeskymmenestoinen',
+    23: 'kahdeskymmeneskolmas', 24: 'kahdeskymmenesneljäs',
+    25: 'kahdeskymmenesviides', 26: 'kahdeskymmeneskuudes',
+    27: 'kahdeskymmenesseitsemäs', 28: 'kahdeskymmeneskahdeksas',
+    29: 'kahdeskymmenesyhdeksäs', 30: 'kolmaskymmenes',
+    31: 'kolmaskymmenesensimmäinen',
+}
+
+_MONTH_PARTITIVES = {
+    1: 'ensimmäistä', 2: 'toista', 3: 'kolmatta', 4: 'neljättä',
+    5: 'viidettä', 6: 'kuudetta', 7: 'seitsemättä', 8: 'kahdeksatta',
+    9: 'yhdeksättä', 10: 'kymmenettä', 11: 'yhdettätoista',
+    12: 'kahdettatoista',
+}
+
+def _colloquial_number(n: int) -> str:
+    ones = ['', 'yks', 'kaks', 'kolme', 'neljä', 'viis', 'kuus',
+            'seittemän', 'kaheksan', 'yheksän']
+    teens = ['kymmenen', 'ykstoista', 'kakstoist', 'kolmetoista',
+             'neljätoista', 'viistoista', 'kuustoista', 'seittemäntoista',
+             'kaheksantoista', 'yheksäntoista']
+    tens_words = ['', '', 'kakskyt', 'kolkyt', 'neljäkyt', 'viiskyt',
+                  'kuuskyt', 'seittemänkyt', 'kaheksankyt', 'yheksänkyt']
+    if n < 10:
+        return ones[n]
+    elif n < 20:
+        return teens[n - 10]
+    else:
+        t = tens_words[n // 10]
+        o = ones[n % 10]
+        return (t + ' ' + o).strip() if o else t
+
+def _date_to_spoken(match) -> str:
+    d, m, y = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    day = _DAY_ORDINALS.get(d, str(d))
+    month = _MONTH_PARTITIVES.get(m, str(m))
+    rest = y - 2000
+    year = ('kakstuhatta ' + _colloquial_number(rest)).strip() if 2000 <= y <= 2099 else str(y)
+    return f'{day} {month} {year}'
+
 def punctuation_to_spoken(text: str) -> str:
-    """Muuntaa välimerkit ja roomalaiset numerot puhutuiksi sanoiksi."""
+    """Muuntaa päivämäärät, välimerkit ja roomalaiset numerot puhutuiksi sanoiksi."""
+    text = re.sub(r'\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b', _date_to_spoken, text)
     for roman, spoken in ROMAN_NUMERALS.items():
         text = re.sub(rf'\b{roman}\b', spoken, text)
     text = text.replace('—', ' ajatusviiva')
