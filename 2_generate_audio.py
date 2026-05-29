@@ -118,7 +118,8 @@ def synthesize_long_text(tts, text: str, ref_file: str) -> np.ndarray:
     for sentence in sentences:
         if not sentence.strip():
             continue
-        wav = tts.tts(text=sentence, speaker_wav=ref_file, language="fi")
+        spoken = punctuation_to_spoken(sentence)
+        wav = tts.tts(text=spoken, speaker_wav=ref_file, language="fi")
         segments.append(np.array(wav, dtype=np.float32))
         segments.append(pause)
 
@@ -128,6 +129,19 @@ def synthesize_long_text(tts, text: str, ref_file: str) -> np.ndarray:
 def split_sentences(text: str) -> list[str]:
     parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÄÖÅ])', text)
     return [p.strip() for p in parts if p.strip()]
+
+
+def punctuation_to_spoken(text: str) -> str:
+    """Muuntaa välimerkit puhutuiksi sanoiksi radiologisen sanelukäytännön mukaisesti."""
+    text = text.replace('—', ' ajatusviiva')
+    text = text.replace('–', ' ajatusviiva')
+    text = text.replace('(', ' sulku auki ')
+    text = text.replace(')', ' sulku kiinni ')
+    text = text.replace(';', ' puolipiste')
+    text = text.replace(':', ' kaksoispiste')
+    text = text.replace(',', ' pilkku')
+    text = text.replace('.', ' piste')
+    return re.sub(r' +', ' ', text).strip()
 
 
 def load_speakers(n: int | None) -> list[dict]:
