@@ -124,7 +124,9 @@ def main():
             })
 
         except Exception as e:
+            import traceback
             tqdm.write(f"  ERROR ({doc_id}): {e}")
+            tqdm.write(traceback.format_exc())
             failed.append(doc_id)
 
     write_metadata(metadata_rows, OUTPUT_DIR / "metadata.csv")
