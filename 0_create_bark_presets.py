@@ -45,7 +45,7 @@ def main():
     print(f"Device: {device}")
     print(f"Creating {args.speakers} Finnish Bark speaker presets...")
 
-    from bark.generation import generate_text_semantic, generate_coarse
+    from bark.generation import generate_text_semantic, generate_coarse, generate_fine
 
     for idx in tqdm(range(args.speakers), desc="Creating presets"):
         preset_path = prompts_dir / f"fi_speaker_{idx}.npz"
@@ -71,10 +71,16 @@ def main():
                 temp=0.7,
             )
 
+            fine_tokens = generate_fine(
+                coarse_tokens,
+                temp=0.5,
+            )
+
             np.savez(
                 str(preset_path),
                 semantic_prompt=np.array(semantic_tokens, dtype=np.int32),
                 coarse_prompt=np.array(coarse_tokens, dtype=np.int64),
+                fine_prompt=np.array(fine_tokens, dtype=np.int64),
             )
 
             tqdm.write(f"  Saved: fi_speaker_{idx}.npz (seed={seed})")
