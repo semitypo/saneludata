@@ -44,6 +44,8 @@ else
         --target $PACKAGES_DIR \
         --system \
         --no-cache
+    # Poistetaan torch workspace-paketeista — käytetään järjestelmän CUDA-yhteensopivaa versiota
+    rm -rf $PACKAGES_DIR/torch $PACKAGES_DIR/torchaudio $PACKAGES_DIR/triton $PACKAGES_DIR/nvidia*
 fi
 
 echo ""
