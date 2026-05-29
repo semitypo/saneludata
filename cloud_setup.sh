@@ -11,6 +11,13 @@ CV_ARCHIVE=$SCRIPT_DIR/data/cv-fi.tar.gz
 CV_DIR=$SCRIPT_DIR/data/cv-corpus-25.0-2026-03-09/fi
 
 echo "=============================="
+echo " Installing system dependencies"
+echo "=============================="
+apt-get install -y espeak-ng libespeak-ng-dev > /dev/null 2>&1
+echo "  espeak-ng OK"
+
+echo ""
+echo "=============================="
 echo " GPU check"
 echo "=============================="
 python -c "

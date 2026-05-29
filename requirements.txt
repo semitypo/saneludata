@@ -1,15 +1,15 @@
-# HUOM: Coqui TTS vaatii Python 3.9–3.11. Käytä conda-ympäristöä:
+# System dependency (install before pip packages):
+#   apt-get install -y espeak-ng libespeak-ng-dev
+#
+# Local setup (conda env with Python 3.11):
 #   conda create -n tts-radio python=3.11 -y
 #   conda activate tts-radio
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements.txt
 #
-# 1. Asenna PyTorch CUDA-tuella (RTX 4090 = CUDA 12.x):
-#    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
-#
-# 2. Asenna loput:
-#    pip install -r requirements.txt
+# Cloud (RunPod): run cloud_setup.sh — handles everything automatically.
 
 piper-tts
-transformers==4.44.2
 datasets>=2.14.0
 soundfile>=0.12.1
 librosa>=0.10.0
