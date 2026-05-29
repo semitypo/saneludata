@@ -25,7 +25,16 @@ from tqdm import tqdm
 OUTPUT_DIR = Path("data/output")
 BARK_SAMPLE_RATE = 24000
 SENTENCE_PAUSE_SEC = 0.45
-FI_SPEAKERS = [f"v2/fi_speaker_{i}" for i in range(10)]
+
+def _get_fi_speakers() -> list[str]:
+    import bark
+    prompts_dir = Path(bark.__file__).parent / "assets" / "prompts" / "v2"
+    speakers = sorted(prompts_dir.glob("fi_speaker_*.npz"))
+    if not speakers:
+        raise RuntimeError(
+            "No Finnish speaker presets found. Run: python 0_create_bark_presets.py"
+        )
+    return [str(s) for s in speakers]
 
 _DAY_ORDINALS = {
     1: 'ensimmäinen', 2: 'toinen', 3: 'kolmas', 4: 'neljäs',
@@ -68,7 +77,8 @@ def main():
     random.seed(args.seed)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    speakers = FI_SPEAKERS[:args.speakers] if args.speakers else FI_SPEAKERS
+    all_speakers = _get_fi_speakers()
+    speakers = all_speakers[:args.speakers] if args.speakers else all_speakers
     rows = load_csv(args.input_csv)
 
     print(f"Speakers: {len(speakers)}")
@@ -93,7 +103,7 @@ def main():
             continue
 
         speaker = random.choice(speakers)
-        speaker_id = speaker.replace("/", "_")
+        speaker_id = Path(speaker).stem
         out_path = OUTPUT_DIR / f"{doc_id}_{speaker_id}.wav"
 
         if out_path.exists():
