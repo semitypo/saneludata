@@ -9,6 +9,7 @@
 #    pip install -r requirements.txt
 
 TTS>=0.22.0
+transformers==4.44.2
 datasets>=2.14.0
 soundfile>=0.12.1
 librosa>=0.10.0

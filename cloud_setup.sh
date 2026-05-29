@@ -40,7 +40,7 @@ else
     echo "  (rinnakkaislataus, näyttää nopeuden ja edistymisen)"
     echo ""
     mkdir -p $PACKAGES_DIR
-    uv pip install TTS datasets soundfile librosa tqdm huggingface_hub \
+    uv pip install TTS "transformers==4.44.2" datasets soundfile librosa tqdm huggingface_hub \
         --target $PACKAGES_DIR \
         --system \
         --no-cache
