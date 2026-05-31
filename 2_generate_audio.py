@@ -61,11 +61,17 @@ _MONTH_PARTITIVES = {
     12: 'kahdettatoista',
 }
 
+_MONTH_NAMES = {
+    1: 'tammikuu', 2: 'helmikuu', 3: 'maaliskuu', 4: 'huhtikuu',
+    5: 'toukokuu', 6: 'kesäkuu', 7: 'heinäkuu', 8: 'elokuu',
+    9: 'syyskuu', 10: 'lokakuu', 11: 'marraskuu', 12: 'joulukuu',
+}
+
 ROMAN_NUMERALS = {
-    'XII': 'kaksitoista', 'XI': 'yksitoista', 'X': 'kymmenen',
-    'IX': 'yhdeksän', 'VIII': 'kahdeksan', 'VII': 'seitsemän',
-    'VI': 'kuusi', 'V': 'viisi', 'IV': 'neljä',
-    'III': 'kolme', 'II': 'kaksi', 'I': 'yksi',
+    'XII': 'roomalainen kaksitoista', 'XI': 'roomalainen yksitoista', 'X': 'roomalainen kymmenen',
+    'IX': 'roomalainen yhdeksän', 'VIII': 'roomalainen kahdeksan', 'VII': 'roomalainen seitsemän',
+    'VI': 'roomalainen kuusi', 'V': 'roomalainen viisi', 'IV': 'roomalainen neljä',
+    'III': 'roomalainen kolme', 'II': 'roomalainen kaksi', 'I': 'roomalainen yksi',
 }
 
 
@@ -233,6 +239,21 @@ def _colloquial_number(n: int) -> str:
         return (t + ' ' + o).strip() if o else t
 
 
+def _month_year_to_spoken(match) -> str:
+    m, y = int(match.group(1)), int(match.group(2))
+    if m < 1 or m > 12:
+        return match.group(0)
+    month = _MONTH_NAMES[m]
+    if y < 100:
+        year = _colloquial_number(y)
+    elif 2000 <= y <= 2099:
+        rest = y - 2000
+        year = ('kakstuhatta ' + _colloquial_number(rest)).strip() if rest else 'kakstuhatta'
+    else:
+        year = str(y)
+    return f'{month} {year}'
+
+
 def _date_to_spoken(match) -> str:
     d, m, y = int(match.group(1)), int(match.group(2)), int(match.group(3))
     day = _DAY_ORDINALS.get(d, str(d))
@@ -243,7 +264,21 @@ def _date_to_spoken(match) -> str:
 
 
 def punctuation_to_spoken(text: str) -> str:
+    # Full dates: 1.3.2024
     text = re.sub(r'\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b', _date_to_spoken, text)
+    # Month/year: 10/25, 9/2025, 5 / 20
+    text = re.sub(r'\b(\d{1,2})\s*/\s*(\d{2,4})\b', _month_year_to_spoken, text)
+    # TNM staging: T3N0, T2N1M0
+    text = re.sub(
+        r'\bT(\d+)N(\d+)(?:M(\d+))?\b',
+        lambda m: 'T ' + m.group(1) + ' N ' + m.group(2) + (' M ' + m.group(3) if m.group(3) else ''),
+        text,
+    )
+    # klo → kello
+    text = re.sub(r'\bklo\b', 'kello', text, flags=re.IGNORECASE)
+    # nro → numero
+    text = re.sub(r'\bnro\b', 'numero', text, flags=re.IGNORECASE)
+    # Roman numerals
     for roman, spoken in ROMAN_NUMERALS.items():
         text = re.sub(rf'\b{roman}\b', spoken, text)
     text = text.replace('—', ' ajatusviiva')

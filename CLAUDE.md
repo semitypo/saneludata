@@ -121,6 +121,25 @@ Reads `metadata.csv`, loads WAVs, creates HuggingFace Dataset with Audio column,
 
 **`split_sentences()`** — splits on `[.!?]` followed by whitespace and an uppercase Finnish letter (`[A-ZÄÖÅ]`). Preserves Finnish abbreviations (`mm.`, `em.`, `ao.` etc.) which are always followed by lowercase letters.
 
+## Dictation Style: Punctuation
+
+Finnish radiologists dictate punctuation marks aloud. The `punctuation_to_spoken()` function converts all symbols to spoken words before TTS synthesis, matching real dictation style:
+
+| Symbol | Spoken |
+|--------|--------|
+| `,` | pilkku |
+| `.` | piste |
+| `;` | puolipiste |
+| `:` | kaksoispiste |
+| `(` | sulku auki |
+| `)` | sulku kiinni |
+| `/` | kautta |
+| `—` `–` | ajatusviiva |
+| `1.3.2024` | ensimmäinen kolmatta kakstuhatta kaksikymmentäneljä |
+| Roman numerals (`III` etc.) | roomalainen + spoken Finnish number (e.g. "roomalainen kolme") |
+
+This means the ASR model learns to transcribe spoken punctuation back to symbols — the target output of the model includes punctuation in written form.
+
 ## Key Constants
 
 | Constant | File | Value | Note |
