@@ -1,19 +1,29 @@
-# System dependency (install before pip packages):
-#   apt-get install -y espeak-ng libespeak-ng-dev
+# Cloud (RunPod): run cloud_setup.sh — handles everything automatically.
 #
 # Local setup (conda env with Python 3.11):
 #   conda create -n tts-radio python=3.11 -y
 #   conda activate tts-radio
 #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#   git clone https://huggingface.co/Finnish-NLP/Chatterbox-Finnish /workspace/chatterbox-finnish
+#   cd /workspace/chatterbox-finnish && python setup.py && cd -
 #   pip install -r requirements.txt
-#
-# Cloud (RunPod): run cloud_setup.sh — handles everything automatically.
 
-piper-tts
-piper-phonemize
+safetensors
+transformers==4.46.3
+diffusers==0.29.0
+peft==0.17.1
+torchao==0.6.1
+resemble-perth==1.0.1
+conformer==0.3.2
+s3tokenizer==0.3.0
+silero-vad==6.2.0
+librosa==0.11.0
+soundfile==0.13.1
+pyloudnorm
+num2words
+pandas
 datasets>=2.14.0
-soundfile>=0.12.1
-librosa>=0.10.0
-numpy>=1.24.0
-tqdm>=4.65.0
 huggingface_hub>=0.20.0
+tqdm>=4.65.0
+omegaconf
+requests

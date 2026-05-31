@@ -7,16 +7,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PACKAGES_DIR=/workspace/packages
+CHATTERBOX_DIR=/workspace/chatterbox-finnish
 CV_ARCHIVE=$SCRIPT_DIR/data/cv-fi.tar.gz
 CV_DIR=$SCRIPT_DIR/data/cv-corpus-25.0-2026-03-09/fi
 
-echo "=============================="
-echo " Installing system dependencies"
-echo "=============================="
-apt-get install -y espeak-ng libespeak-ng-dev > /dev/null 2>&1
-echo "  espeak-ng OK"
-
-echo ""
 echo "=============================="
 echo " GPU check"
 echo "=============================="
@@ -31,6 +25,39 @@ else:
 
 echo ""
 echo "=============================="
+echo " Chatterbox-Finnish setup"
+echo "=============================="
+if [ -d "$CHATTERBOX_DIR/.git" ]; then
+    echo "  Chatterbox-Finnish already cloned — checking for updates..."
+    git -C "$CHATTERBOX_DIR" pull --ff-only 2>/dev/null || echo "  (could not pull, continuing with existing version)"
+else
+    echo "  Cloning Finnish-NLP/Chatterbox-Finnish..."
+    apt-get install -y git-lfs > /dev/null 2>&1
+    git lfs install
+    git clone https://huggingface.co/Finnish-NLP/Chatterbox-Finnish "$CHATTERBOX_DIR"
+    echo "  Cloned: $CHATTERBOX_DIR"
+fi
+
+if [ ! -f "$CHATTERBOX_DIR/pretrained_models/ve.safetensors" ]; then
+    echo "  Downloading pretrained base models..."
+    cd "$CHATTERBOX_DIR"
+    python setup.py
+    cd "$SCRIPT_DIR"
+    echo "  Pretrained models ready."
+else
+    echo "  Pretrained models already present."
+fi
+
+if [ ! -f "$CHATTERBOX_DIR/models/best_finnish_multilingual_cp986.safetensors" ]; then
+    echo "  WARNING: Finnish checkpoint not found in $CHATTERBOX_DIR/models/"
+    echo "           Check that git-lfs downloaded the .safetensors file correctly:"
+    echo "           cd $CHATTERBOX_DIR && git lfs pull"
+else
+    echo "  Finnish checkpoint OK."
+fi
+
+echo ""
+echo "=============================="
 echo " Installing uv (fast pip)"
 echo "=============================="
 pip install uv --quiet
@@ -38,31 +65,57 @@ echo "  uv OK"
 
 echo ""
 echo "=============================="
-echo " Checking if packages are installed"
+echo " Installing Python packages"
 echo "=============================="
-if PYTHONPATH=$PACKAGES_DIR python -c "import bark" 2>/dev/null; then
+if python -c "import safetensors, transformers, silero_vad" 2>/dev/null; then
     echo "  Packages already installed ($PACKAGES_DIR) — skipping."
 else
     echo "  Installing packages -> $PACKAGES_DIR"
-    echo "  (parallel downloads with speed and progress display)"
-    echo ""
     mkdir -p $PACKAGES_DIR
-    uv pip install piper-tts piper-phonemize datasets soundfile librosa tqdm huggingface_hub \
+    # Install Chatterbox runtime deps (torch/xformers come from RunPod template)
+    uv pip install \
+        safetensors \
+        "transformers==4.46.3" \
+        "diffusers==0.29.0" \
+        "peft==0.17.1" \
+        "torchao==0.6.1" \
+        "resemble-perth==1.0.1" \
+        "conformer==0.3.2" \
+        "s3tokenizer==0.3.0" \
+        "silero-vad==6.2.0" \
+        "librosa==0.11.0" \
+        "soundfile==0.13.1" \
+        pyloudnorm \
+        num2words \
+        ffmpeg-python \
+        pandas \
+        huggingface_hub \
+        "datasets>=2.14.0" \
+        tqdm \
+        omegaconf \
+        hf_transfer \
+        gdown \
+        requests \
         --target $PACKAGES_DIR \
         --system \
         --no-cache
-    # Remove torch from workspace packages — use system CUDA-compatible version
-    rm -rf $PACKAGES_DIR/torch $PACKAGES_DIR/torchaudio $PACKAGES_DIR/triton $PACKAGES_DIR/nvidia*
+    # Remove any torch that got pulled in — use RunPod's CUDA-built version
+    rm -rf $PACKAGES_DIR/torch $PACKAGES_DIR/torchaudio $PACKAGES_DIR/torchvision \
+           $PACKAGES_DIR/triton $PACKAGES_DIR/nvidia*
+    echo "  Packages installed."
 fi
 
 echo ""
 echo "=============================="
 echo " Setting PYTHONPATH"
 echo "=============================="
-export PYTHONPATH=$PACKAGES_DIR:$PYTHONPATH
-grep -qF "export PYTHONPATH=$PACKAGES_DIR" ~/.bashrc 2>/dev/null || \
-    echo "export PYTHONPATH=$PACKAGES_DIR:\$PYTHONPATH" >> ~/.bashrc
-echo "  PYTHONPATH=$PACKAGES_DIR"
+export PYTHONPATH=$CHATTERBOX_DIR:$PACKAGES_DIR:$PYTHONPATH
+for line in \
+    "export PYTHONPATH=$CHATTERBOX_DIR:\$PYTHONPATH" \
+    "export PYTHONPATH=$PACKAGES_DIR:\$PYTHONPATH"; do
+    grep -qF "$line" ~/.bashrc 2>/dev/null || echo "$line" >> ~/.bashrc
+done
+echo "  PYTHONPATH includes $CHATTERBOX_DIR and $PACKAGES_DIR"
 
 echo ""
 echo "=============================="
@@ -109,7 +162,7 @@ fi
 
 echo ""
 echo "=============================="
-echo " Checking reference voices"
+echo " Reference voices"
 echo "=============================="
 if [ -f "$SCRIPT_DIR/data/reference_voices/manifest.json" ]; then
     COUNT=$(python3 -c "import json; d=json.load(open('$SCRIPT_DIR/data/reference_voices/manifest.json')); print(len(d))")
@@ -118,10 +171,8 @@ elif [ -f "$CV_DIR/validated.tsv" ]; then
     echo "  Building reference voices..."
     cd "$SCRIPT_DIR"
     python 1_prepare_voices.py --cv-path "$CV_DIR"
-    echo "  Building Bark speaker presets..."
-    python 0_create_bark_presets.py
 else
-    echo "  WARNING: Run 1_prepare_voices.py and 0_create_bark_presets.py after Common Voice is ready."
+    echo "  WARNING: Run 1_prepare_voices.py after Common Voice is ready."
 fi
 
 echo ""
@@ -129,3 +180,4 @@ echo "=============================="
 echo " Ready!"
 echo "=============================="
 echo "  Run: python 2_generate_audio.py data/transcriptions/sanelut.csv"
+echo "  Run: python 2_generate_audio.py data/transcriptions/sanelut.csv --speakers 15"

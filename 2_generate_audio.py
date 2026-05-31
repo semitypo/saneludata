@@ -1,35 +1,43 @@
 """
 Step 2: Generate audio from transcribed radiological dictations.
 
-Uses Piper TTS with Finnish voice (fi_FI-harri-medium).
-Model is downloaded automatically on first run.
+Uses Finnish-NLP/Chatterbox-Finnish (zero-shot voice cloning) with
+speaker reference WAVs built by 1_prepare_voices.py.
+
+Requires:
+  git clone https://huggingface.co/Finnish-NLP/Chatterbox-Finnish /workspace/chatterbox-finnish
+  cd /workspace/chatterbox-finnish && python setup.py
+  (cloud_setup.sh handles all of this automatically)
 
 Usage:
   python 2_generate_audio.py data/transcriptions/sanelut.csv
-  python 2_generate_audio.py data/transcriptions/sanelut.csv --seed 123
+  python 2_generate_audio.py data/transcriptions/sanelut.csv --speakers 10 --seed 123
 """
 
 import argparse
 import csv
+import json
 import random
 import re
 import sys
-import tempfile
-import os
-import wave
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 from tqdm import tqdm
 
+CHATTERBOX_DIR = Path("/workspace/chatterbox-finnish")
+FINNISH_CHECKPOINT = CHATTERBOX_DIR / "models/best_finnish_multilingual_cp986.safetensors"
 OUTPUT_DIR = Path("data/output")
-MODELS_DIR = Path("data/piper_models")
-PIPER_SAMPLE_RATE = 22050
+MANIFEST_PATH = Path("data/reference_voices/manifest.json")
 SENTENCE_PAUSE_SEC = 0.45
 
-PIPER_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fi/fi_FI/harri/medium/fi_FI-harri-medium.onnx"
-PIPER_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fi/fi_FI/harri/medium/fi_FI-harri-medium.onnx.json"
+FI_PARAMS = dict(
+    repetition_penalty=1.5,
+    temperature=0.8,
+    exaggeration=0.5,
+    cfg_weight=0.3,
+)
 
 _DAY_ORDINALS = {
     1: 'ensimmäinen', 2: 'toinen', 3: 'kolmas', 4: 'neljäs',
@@ -63,58 +71,60 @@ ROMAN_NUMERALS = {
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_csv", help="CSV file with 'id' and 'text' columns")
+    parser.add_argument("input_csv", help="CSV with 'id' and 'text' columns")
+    parser.add_argument("--speakers", type=int, default=20,
+                        help="Max speakers from manifest (default: 20)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     random.seed(args.seed)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     rows = load_csv(args.input_csv)
-    print(f"Dictations: {len(rows)}")
+    speakers = load_manifest(args.speakers)
+    print(f"Dictations: {len(rows)}  |  Speakers: {len(speakers)}  |  Total: {len(rows) * len(speakers)}")
 
-    model_path, config_path = download_model()
-
-    print("Loading Piper TTS model...")
-    from piper.voice import PiperVoice
-    voice = PiperVoice.load(str(model_path), config_path=str(config_path))
-    print("Model loaded.")
+    engine = load_engine()
 
     metadata_rows = []
     failed = []
 
-    for row in tqdm(rows, desc="Generating audio"):
-        doc_id = row["id"].strip()
-        text = row["text"].strip()
+    total = len(rows) * len(speakers)
+    with tqdm(total=total, desc="Generating audio") as pbar:
+        for row in rows:
+            doc_id = row["id"].strip()
+            text = row["text"].strip()
 
-        if not text:
-            continue
+            if not text:
+                pbar.update(len(speakers))
+                continue
 
-        out_path = OUTPUT_DIR / f"{doc_id}_fi_harri.wav"
+            for speaker_id, speaker_info in speakers.items():
+                out_path = OUTPUT_DIR / f"{doc_id}_{speaker_id}.wav"
 
-        if out_path.exists():
-            tqdm.write(f"  Skipping (already exists): {out_path.name}")
-            continue
+                if out_path.exists():
+                    pbar.write(f"  Skipping: {out_path.name}")
+                    pbar.update(1)
+                    continue
 
-        try:
-            wav = synthesize_long_text(voice, text)
-            sf.write(out_path, wav, PIPER_SAMPLE_RATE)
-            duration_sec = len(wav) / PIPER_SAMPLE_RATE
+                try:
+                    wav, sr = synthesize_long_text(engine, text, speaker_info["file"])
+                    sf.write(out_path, wav, sr)
+                    duration_sec = len(wav) / sr
+                    metadata_rows.append({
+                        "id": doc_id,
+                        "audio_file": str(out_path),
+                        "speaker_id": speaker_id,
+                        "duration_sec": round(duration_sec, 2),
+                        "text": text,
+                    })
+                except Exception as e:
+                    import traceback
+                    pbar.write(f"  ERROR ({doc_id}/{speaker_id}): {e}")
+                    pbar.write(traceback.format_exc())
+                    failed.append(f"{doc_id}/{speaker_id}")
 
-            metadata_rows.append({
-                "id": doc_id,
-                "audio_file": str(out_path),
-                "speaker_id": "fi_harri",
-                "duration_sec": round(duration_sec, 2),
-                "text": text,
-            })
-
-        except Exception as e:
-            import traceback
-            tqdm.write(f"  ERROR ({doc_id}): {e}")
-            tqdm.write(traceback.format_exc())
-            failed.append(doc_id)
+                pbar.update(1)
 
     write_metadata(metadata_rows, OUTPUT_DIR / "metadata.csv")
 
@@ -129,48 +139,75 @@ def main():
         print(f"\n  Failed ({len(failed)}): {', '.join(failed[:10])}")
 
 
-def download_model() -> tuple[Path, Path]:
-    model_path = MODELS_DIR / "fi_FI-harri-medium.onnx"
-    config_path = MODELS_DIR / "fi_FI-harri-medium.onnx.json"
+def load_engine():
+    import torch
 
-    if not model_path.exists():
-        print(f"Downloading Piper Finnish model...")
-        import urllib.request
-        urllib.request.urlretrieve(PIPER_MODEL_URL, model_path)
-        print(f"  Saved: {model_path}")
+    if not CHATTERBOX_DIR.exists():
+        raise RuntimeError(
+            f"Chatterbox-Finnish not found: {CHATTERBOX_DIR}\n"
+            "Run: git clone https://huggingface.co/Finnish-NLP/Chatterbox-Finnish /workspace/chatterbox-finnish"
+        )
 
-    if not config_path.exists():
-        import urllib.request
-        urllib.request.urlretrieve(PIPER_CONFIG_URL, config_path)
-        print(f"  Saved: {config_path}")
+    pretrained_dir = CHATTERBOX_DIR / "pretrained_models"
+    if not pretrained_dir.exists():
+        raise RuntimeError(
+            f"Pretrained models not found: {pretrained_dir}\n"
+            f"Run: cd {CHATTERBOX_DIR} && python setup.py"
+        )
 
-    return model_path, config_path
+    sys.path.insert(0, str(CHATTERBOX_DIR))
+    from src.chatterbox_.tts import ChatterboxTTS
+    from safetensors.torch import load_file
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Loading Chatterbox engine ({device})...")
+    engine = ChatterboxTTS.from_local(str(pretrained_dir), device=device)
+
+    if FINNISH_CHECKPOINT.exists():
+        print(f"Injecting Finnish weights: {FINNISH_CHECKPOINT.name}")
+        checkpoint = load_file(str(FINNISH_CHECKPOINT))
+        t3_state = {k[3:] if k.startswith("t3.") else k: v for k, v in checkpoint.items()}
+        engine.t3.load_state_dict(t3_state, strict=False)
+    else:
+        print(f"WARNING: Finnish checkpoint not found: {FINNISH_CHECKPOINT}")
+        print("         Running with base Chatterbox weights (Finnish quality may be reduced).")
+
+    print("Model loaded.")
+    return engine
 
 
-def synthesize_long_text(voice, text: str) -> np.ndarray:
+def load_manifest(max_speakers: int) -> dict:
+    if not MANIFEST_PATH.exists():
+        raise FileNotFoundError(
+            f"Speaker manifest not found: {MANIFEST_PATH}\n"
+            "Run: python 1_prepare_voices.py --cv-path <path-to-cv-fi>"
+        )
+    with open(MANIFEST_PATH, encoding="utf-8") as f:
+        manifest = json.load(f)
+    keys = list(manifest.keys())[:max_speakers]
+    return {k: manifest[k] for k in keys}
+
+
+def synthesize_long_text(engine, text: str, speaker_wav: str) -> tuple[np.ndarray, int]:
     sentences = split_sentences(text)
-    pause = np.zeros(int(SENTENCE_PAUSE_SEC * PIPER_SAMPLE_RATE), dtype=np.float32)
+    sr = engine.sr
+    pause = np.zeros(int(SENTENCE_PAUSE_SEC * sr), dtype=np.float32)
     segments = []
 
     for sentence in sentences:
         if not sentence.strip():
             continue
         spoken = punctuation_to_spoken(sentence)
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp_path = tmp.name
-        try:
-            with wave.open(tmp_path, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
-                wav_file.setframerate(voice.config.sample_rate)
-                voice.synthesize(spoken, wav_file)
-            audio, _ = sf.read(tmp_path, dtype="float32")
-        finally:
-            os.unlink(tmp_path)
+        wav_tensor = engine.generate(
+            text=spoken,
+            audio_prompt_path=speaker_wav,
+            **FI_PARAMS,
+        )
+        audio = wav_tensor.squeeze().cpu().numpy().astype(np.float32)
         segments.append(audio)
         segments.append(pause)
 
-    return np.concatenate(segments) if segments else np.zeros(PIPER_SAMPLE_RATE, dtype=np.float32)
+    return (np.concatenate(segments) if segments else np.zeros(sr, dtype=np.float32)), sr
 
 
 def split_sentences(text: str) -> list[str]:
