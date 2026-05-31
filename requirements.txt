@@ -10,6 +10,7 @@
 # Cloud (RunPod): run cloud_setup.sh — handles everything automatically.
 
 piper-tts
+piper-phonemize
 datasets>=2.14.0
 soundfile>=0.12.1
 librosa>=0.10.0

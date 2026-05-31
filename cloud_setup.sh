@@ -47,7 +47,7 @@ else
     echo "  (parallel downloads with speed and progress display)"
     echo ""
     mkdir -p $PACKAGES_DIR
-    uv pip install piper-tts datasets soundfile librosa tqdm huggingface_hub \
+    uv pip install piper-tts piper-phonemize datasets soundfile librosa tqdm huggingface_hub \
         --target $PACKAGES_DIR \
         --system \
         --no-cache
