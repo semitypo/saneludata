@@ -4,6 +4,8 @@ Step 2: Generate audio from transcribed radiological dictations.
 Uses Finnish-NLP/Chatterbox-Finnish (zero-shot voice cloning) with
 speaker reference WAVs built by 1_prepare_voices.py.
 
+Output format: 16 kHz mono WAV + metadata.csv (HuggingFace/Whisper compatible).
+
 Requires:
   git clone https://huggingface.co/Finnish-NLP/Chatterbox-Finnish /workspace/chatterbox-finnish
   cd /workspace/chatterbox-finnish && python setup.py
@@ -12,6 +14,8 @@ Requires:
 Usage:
   python 2_generate_audio.py data/transcriptions/sanelut.csv
   python 2_generate_audio.py data/transcriptions/sanelut.csv --speakers 10 --seed 123
+  python 2_generate_audio.py data/transcriptions/sanelut.csv --default-voice  # no manifest needed
+  python 2_generate_audio.py data/transcriptions/sanelut.csv --ids vartalo_tt_001 vartalo_tt_002
 """
 
 import argparse
@@ -31,6 +35,7 @@ FINNISH_CHECKPOINT = CHATTERBOX_DIR / "models/best_finnish_multilingual_cp986.sa
 OUTPUT_DIR = Path("data/output")
 MANIFEST_PATH = Path("data/reference_voices/manifest.json")
 SENTENCE_PAUSE_SEC = 0.45
+OUTPUT_SAMPLE_RATE = 16000  # ASR standard (Whisper, wav2vec2)
 
 FI_PARAMS = dict(
     repetition_penalty=1.5,
@@ -76,18 +81,39 @@ ROMAN_NUMERALS = {
 
 
 def main():
+    global CHATTERBOX_DIR, FINNISH_CHECKPOINT
     parser = argparse.ArgumentParser()
     parser.add_argument("input_csv", help="CSV with 'id' and 'text' columns")
     parser.add_argument("--speakers", type=int, default=20,
                         help="Max speakers from manifest (default: 20)")
+    parser.add_argument("--default-voice", action="store_true",
+                        help="Use Chatterbox default voice — no manifest/reference audio needed")
+    parser.add_argument("--ids", nargs="+", metavar="ID",
+                        help="Only process these specific IDs (e.g. --ids vartalo_tt_001)")
+    parser.add_argument("--chatterbox-dir", type=Path, default=None,
+                        help=f"Path to Chatterbox-Finnish repo (default: {CHATTERBOX_DIR})")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+
+    if args.chatterbox_dir:
+        CHATTERBOX_DIR = args.chatterbox_dir
+        FINNISH_CHECKPOINT = CHATTERBOX_DIR / "models/best_finnish_multilingual_cp986.safetensors"
 
     random.seed(args.seed)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     rows = load_csv(args.input_csv)
-    speakers = load_manifest(args.speakers)
+    if args.ids:
+        rows = [r for r in rows if r["id"].strip() in args.ids]
+        if not rows:
+            print(f"ERROR: none of the requested IDs found in CSV: {args.ids}")
+            sys.exit(1)
+
+    if args.default_voice:
+        speakers = {"default": {"file": None}}
+    else:
+        speakers = load_manifest(args.speakers)
+
     print(f"Dictations: {len(rows)}  |  Speakers: {len(speakers)}  |  Total: {len(rows) * len(speakers)}")
 
     engine = load_engine()
@@ -117,12 +143,17 @@ def main():
                     wav, sr = synthesize_long_text(engine, text, speaker_info["file"])
                     sf.write(out_path, wav, sr)
                     duration_sec = len(wav) / sr
+                    spoken_text = ' '.join(
+                        punctuation_to_spoken(s)
+                        for s in split_sentences(text)
+                        if s.strip()
+                    )
                     metadata_rows.append({
-                        "id": doc_id,
-                        "audio_file": str(out_path),
+                        "file_name": out_path.name,
+                        "transcription": spoken_text,
                         "speaker_id": speaker_id,
                         "duration_sec": round(duration_sec, 2),
-                        "text": text,
+                        "sample_rate": OUTPUT_SAMPLE_RATE,
                     })
                 except Exception as e:
                     import traceback
@@ -194,26 +225,31 @@ def load_manifest(max_speakers: int) -> dict:
     return {k: manifest[k] for k in keys}
 
 
-def synthesize_long_text(engine, text: str, speaker_wav: str) -> tuple[np.ndarray, int]:
+def synthesize_long_text(engine, text: str, speaker_wav: str | None) -> tuple[np.ndarray, int]:
+    import librosa
     sentences = split_sentences(text)
-    sr = engine.sr
-    pause = np.zeros(int(SENTENCE_PAUSE_SEC * sr), dtype=np.float32)
+    native_sr = engine.sr
+    pause = np.zeros(int(SENTENCE_PAUSE_SEC * native_sr), dtype=np.float32)
     segments = []
 
     for sentence in sentences:
         if not sentence.strip():
             continue
         spoken = punctuation_to_spoken(sentence)
-        wav_tensor = engine.generate(
-            text=spoken,
-            audio_prompt_path=speaker_wav,
-            **FI_PARAMS,
-        )
+        kwargs = {**FI_PARAMS}
+        if speaker_wav:
+            kwargs["audio_prompt_path"] = speaker_wav
+        wav_tensor = engine.generate(text=spoken, **kwargs)
         audio = wav_tensor.squeeze().cpu().numpy().astype(np.float32)
         segments.append(audio)
         segments.append(pause)
 
-    return (np.concatenate(segments) if segments else np.zeros(sr, dtype=np.float32)), sr
+    combined = np.concatenate(segments) if segments else np.zeros(native_sr, dtype=np.float32)
+
+    if native_sr != OUTPUT_SAMPLE_RATE:
+        combined = librosa.resample(combined, orig_sr=native_sr, target_sr=OUTPUT_SAMPLE_RATE)
+
+    return combined, OUTPUT_SAMPLE_RATE
 
 
 def split_sentences(text: str) -> list[str]:
